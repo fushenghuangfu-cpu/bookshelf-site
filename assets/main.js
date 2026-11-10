@@ -68,6 +68,12 @@
         n.textContent = dict[key];
       }
     }
+    var alts = document.querySelectorAll('[data-i18n-alt]');
+    for (var j = 0; j < alts.length; j++) {
+      var altEl = alts[j];
+      var altKey = altEl.getAttribute('data-i18n-alt');
+      if (altKey && dict[altKey]) altEl.setAttribute('alt', dict[altKey]);
+    }
     var code = dict['_html.lang'] || 'en';
     document.documentElement.lang = code;
     document.documentElement.dir = RTL.indexOf(code) >= 0 ? 'rtl' : 'ltr';
@@ -84,6 +90,14 @@
     section.hidden = !any;
   }
 
+  // Keep the numeric suffix and extension; swap only the language prefix.
+  // png and jpg (including jpeg) are both accepted. A missing localized file
+  // falls back to the English src stored on data-template. The figure is
+  // hidden only when that English file also fails.
+  function shotSrc(template, lang) {
+    return template.replace(/\/[a-zA-Z-]+-(\d+\.(?:png|jpe?g))$/i, '/' + lang + '-$1');
+  }
+
   function wireShots(lang) {
     var imgs = document.querySelectorAll('.screenshots img');
     for (var i = 0; i < imgs.length; i++) {
@@ -92,22 +106,47 @@
           img.setAttribute('data-template', img.getAttribute('src'));
         }
         var template = img.getAttribute('data-template');
-        var next = template.replace(/\/[a-zA-Z-]+-(\d+\.jpg)$/, '/' + lang + '-$1');
+        var next = shotSrc(template, lang);
         var fig = img.closest ? img.closest('figure') : null;
-        img.onload = function () {
+        var token = (img._shotToken || 0) + 1;
+        img._shotToken = token;
+
+        function show() {
+          if (img._shotToken !== token) return;
           if (fig) fig.hidden = false;
           refreshShots();
-        };
-        img.onerror = function () {
+        }
+        function hide() {
+          if (img._shotToken !== token) return;
           if (fig) fig.hidden = true;
           refreshShots();
-        };
-        if (img.getAttribute('src') !== next) {
-          img.setAttribute('src', next);
-        } else if (img.complete) {
-          if (fig) fig.hidden = !(img.naturalWidth > 0);
-          refreshShots();
         }
+        function commit(url) {
+          if (img._shotToken !== token) return;
+          img.onerror = function () {
+            if (img._shotToken !== token) return;
+            if (url !== template) attempt(template, false);
+            else hide();
+          };
+          if (img.getAttribute('src') !== url) img.setAttribute('src', url);
+          show();
+        }
+        function attempt(url, canFallback) {
+          if (img._shotToken !== token) return;
+          if (img.getAttribute('src') === url && img.complete && img.naturalWidth > 0) {
+            show();
+            return;
+          }
+          var probe = new Image();
+          probe.onload = function () { commit(url); };
+          probe.onerror = function () {
+            if (img._shotToken !== token) return;
+            if (canFallback && url !== template) attempt(template, false);
+            else hide();
+          };
+          probe.src = url;
+        }
+        attempt(next, true);
       })(imgs[i]);
     }
   }
